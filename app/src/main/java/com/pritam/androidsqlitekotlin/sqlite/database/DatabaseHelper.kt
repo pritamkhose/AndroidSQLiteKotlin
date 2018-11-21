@@ -112,6 +112,26 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         return id
     }
 
+    fun createNote(note: Note) : Long {
+        // get writable database as we want to write data
+        val db = this.writableDatabase
+
+        val values = ContentValues()
+        // `id` and `timestamp` will be inserted automatically.
+        // no need to add them
+        values.put(COLUMN_ID, note.id)
+        values.put(COLUMN_NOTE, note.note)
+        values.put(COLUMN_TIMESTAMP, note.timestamp)
+        // insert row
+        val id = db.insert(TABLE_NAME, null, values)
+
+        // close db connection
+        db.close()
+
+        // return newly inserted row id
+        return id
+    }
+
     fun getNote(id: Long): Note {
         // get readable database as we are not inserting anything
         val db = this.readableDatabase
@@ -150,6 +170,13 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME
         val db = this.writableDatabase
         db.delete(TABLE_NAME, COLUMN_ID + " = ?",
                 arrayOf(note.id.toString()))
+        db.close()
+    }
+
+    fun deleteAllNote() {
+        val db = this.writableDatabase
+        //db.delete(TABLE_NAME, COLUMN_ID + " = ?", arrayOf(""))
+        db.execSQL("delete from "+ TABLE_NAME + "; ");
         db.close()
     }
 

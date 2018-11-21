@@ -1,7 +1,10 @@
 package com.pritam.androidsqlitekotlin.view
 
+import android.content.Context
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Bundle
+import android.support.design.widget.Snackbar
 import android.support.v7.app.AlertDialog
 import android.support.v7.app.AppCompatActivity
 import android.support.v7.widget.DefaultItemAnimator
@@ -21,6 +24,28 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.content_main.*
 import kotlinx.android.synthetic.main.note_dialog.view.*
 import java.util.*
+
+import com.google.gson.JsonParser
+import com.google.gson.JsonArray
+import android.R.string.cancel
+import android.util.Log
+
+import android.app.ProgressDialog
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+
+import java.util.concurrent.TimeUnit
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import java.io.IOException
+import java.io.PrintWriter
+import java.io.StringWriter
 
 
 class HomeActivity : AppCompatActivity() {
@@ -52,21 +77,25 @@ class HomeActivity : AppCompatActivity() {
 
         toggleEmptyNotes()
 
-        /**
-         * On long press on RecyclerView item, open alert dialog
-         * with options to choose
-         * Edit and Delete
-         * */
+        /*
+         * On long press on RecyclerView item, open alert dialog  with options to choose Edit and Delete
+         */
+
         recycler_view.addOnItemTouchListener(RecyclerTouchListener(this@HomeActivity, recycler_view, object : RecyclerTouchListener.ClickListener {
             override fun onClick(view: View, position: Int) {
-                //  Toast.makeText(this@HomeActivity,"selected successfully "+  position , Toast.LENGTH_SHORT).show()
-                // Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG).setAction("Action", null).show()
+                showActionsDialog(position)
             }
 
             override fun onLongClick(view: View?, position: Int) {
                 showActionsDialog(position)
             }
         }))
+
+        progress = ProgressDialog(this);
+        //progress!!.setTitle("Loading");
+        progress!!.setMessage("Please wait while loading...");
+        progress!!.setCancelable(false);
+
 
     }
 
@@ -85,9 +114,9 @@ class HomeActivity : AppCompatActivity() {
         alertDialogBuilderUserInput
                 .setCancelable(false)
                 .setPositiveButton(if (shouldUpdate) "update" else "save")
-                    { dialogBox, id -> }
+                { dialogBox, id -> }
                 .setNegativeButton("cancel")
-                    { dialogBox, id -> dialogBox.cancel() }
+                { dialogBox, id -> dialogBox.cancel() }
 
         val alertDialog = alertDialogBuilderUserInput.create()
         alertDialog.show()
@@ -104,7 +133,7 @@ class HomeActivity : AppCompatActivity() {
             // check if user updating note
             if (shouldUpdate && view.note.text.toString() != null) {
                 // update note by it's id
-                 updateNote(view.note.text.toString(), position)
+                updateNote(view.note.text.toString(), position)
             } else {
                 // create new note
                 createNote(view.note.text.toString())
@@ -115,7 +144,7 @@ class HomeActivity : AppCompatActivity() {
     private fun updateNote(text: String, position: Int) {
         val n = notesList.get(position)
         // updating note text
-        n.note =text
+        n.note = text
 
         // updating note in db
         db!!.updateNote(n)
@@ -135,8 +164,7 @@ class HomeActivity : AppCompatActivity() {
         // get the newly inserted note from db
         val n = db!!.getNote(id)
 
-         if (n != null)
-        {
+        if (n != null) {
             // adding new note to array list at 0 position
             notesList.add(0, n)
 
@@ -212,12 +240,210 @@ class HomeActivity : AppCompatActivity() {
                     finishAffinity();
                     System.exit(0);
                 } else {
-                   doexit()
+                    doexit()
                 }
                 true
             }
+            R.id.action_backup -> {
+                if (isNetworkAvaiable()) {
+                    http_post_request()
+                } else {
+                    alertDialog();
+                }
+                true
+            }
+            R.id.action_restore -> {
+                if (isNetworkAvaiable()) {
+                    http_get_request()
+                } else {
+                    alertDialog();
+                }
+                true
+            }
+
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    var progress: ProgressDialog? = null
+    var myResponse: String = ""
+    private fun http_get_request() {
+        try {
+            progress!!.show()
+            myResponse = ""
+            val url = "https://angular-db-fa163.firebaseio.com/androidsqlitekotlin/user1.json"
+
+            val client = OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .writeTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+            val request = Request.Builder()
+                    .url(url)
+                    .build()
+            Log.d("-->>", request.toString())
+
+            client.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    call.cancel()
+                    progress!!.dismiss()
+                    Log.d("-->>", getStackTrace(e))
+                    alertDialog("Request Failure", getStackTrace(e))
+                }
+
+                @Throws(IOException::class)
+                override fun onResponse(call: Call, response: Response) {
+                    progress!!.dismiss()
+
+                    this@HomeActivity.runOnUiThread(Runnable {
+
+                        try {
+                            //JsonObject newObj = new JsonParser().parse(response.body().toString()).getAsJsonObject();
+                            //val newArr = JsonParser().parse(response.body().toString()).getAsJsonArray()
+                            val newObj = JsonParser().parse(response.body()!!.string()).getAsJsonObject()
+                            myResponse = newObj.toString()
+                            Log.d("-->>", myResponse)
+                            updateNetNote(newObj)
+                        } catch (e: Exception) {
+                            Log.d("-->>", getStackTrace(e))
+                            alertDialog("Server Data Not Available", getStackTrace(e))
+                        }
+                    }
+                    )
+
+                }
+            })
+        } catch (e: Exception) {
+            progress!!.dismiss()
+            Log.d("-->>", getStackTrace(e))
+            alertDialog("Exception", getStackTrace(e))
+        }
+
+    }
+
+    private fun updateNetNote(newObj: JsonObject?) {
+        db!!.deleteAllNote()
+
+        if (newObj != null) {
+            val jArr = newObj.get("user1").asJsonArray
+            for (i in 0 until jArr.size()) {
+                val jObj = jArr[i].asJsonObject
+                val note = Note(jObj.get("id").asInt, jObj.get("note").asString, jObj.get("timestamp").asString)
+                // inserting note in db
+                val id = db!!.createNote(note)
+            }
+        }
+
+        // refreshing the list
+        notesList.clear()
+        notesList.addAll(db!!.allNotes)
+
+//        mAdapter = NotesAdapter(this@HomeActivity, notesList)
+//        recycler_view.setAdapter(mAdapter)
+
+        mAdapter?.notifyDataSetChanged()
+        toggleEmptyNotes()
+    }
+
+    private fun http_post_request() {
+        try {
+            progress!!.show()
+            myResponse = ""
+            val url = "https://angular-db-fa163.firebaseio.com/androidsqlitekotlin/user1.json"
+
+            val postBody: String = getBody()
+
+            val body = RequestBody.create(MediaType.parse("application/json; charset=utf-8"), postBody)
+
+            val client = OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .writeTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+            val request = Request.Builder()
+                    .url(url)
+                    .put(body)
+                    .build()
+            Log.d("-->>", request.toString())
+
+            client.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    call.cancel()
+                    progress!!.dismiss()
+                    Log.d("-->>", getStackTrace(e))
+                    alertDialog("Request Failure", getStackTrace(e))
+                }
+
+                @Throws(IOException::class)
+                override fun onResponse(call: Call, response: Response) {
+                    progress!!.dismiss()
+                    myResponse = response.toString() + "\n"
+
+                    try {
+                        //JsonObject newObj = new JsonParser().parse(response.body().toString()).getAsJsonObject();
+                        val newArr = JsonParser().parse(response.body().toString()).getAsJsonArray()
+                        myResponse += newArr.toString()
+                    } catch (e: Exception) {
+                        Log.d("-->>", getStackTrace(e))
+                        myResponse += response.body().toString()
+                    }
+
+                    this@HomeActivity.runOnUiThread(Runnable {
+                        //text_response.setText(myResponse)
+                        Log.d("-->>", myResponse)
+                    }
+                    )
+
+                }
+            })
+        } catch (e: Exception) {
+            progress!!.dismiss()
+            Log.d("-->>", getStackTrace(e))
+            alertDialog("Exception", getStackTrace(e))
+        }
+    }
+
+    private fun getBody(): String {
+        val hm: HashMap<String, Any> = HashMap<String, Any>()
+        hm.put("user1", notesList)
+        return Gson().toJson(hm).toString()
+    }
+
+    private fun getStackTrace(aThrowable: Throwable): String {
+        val result = StringWriter()
+        val printWriter = PrintWriter(result)
+        aThrowable.printStackTrace(printWriter)
+        return result.toString()
+    }
+
+
+    private fun alertDialog() {
+        Snackbar.make(getWindow().getDecorView().getRootView(), "No Internet Connection", Snackbar.LENGTH_LONG).setAction("Action", null).show()
+    }
+
+    private fun alertDialog(title: String, message: String) {
+        val alertDialogBuilder = AlertDialog.Builder(this@HomeActivity)
+        alertDialogBuilder.setTitle(title)
+        alertDialogBuilder.setMessage(message);
+        alertDialogBuilder
+                .setCancelable(false)
+                .setNegativeButton("cancel")
+                { dialogBox, id -> dialogBox.cancel() }
+        val alertDialog = alertDialogBuilder.create()
+        alertDialog.show()
+    }
+
+    private fun isNetworkAvaiable(): Boolean {
+        val cm = getApplicationContext()
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        val activeNetwork = cm.activeNetworkInfo
+        return if (activeNetwork != null && activeNetwork.isConnected) {
+            true
+        } else false
+
     }
 
     private fun doexit() {
